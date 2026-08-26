@@ -1,4 +1,4 @@
-// trigger deploy
+// trigger deploy 2
 const SKU = "100358795300";
 const AREA = "2_2_2834_0";
 const PRODUCT = "https://3.jd.hk/102JD-m0";
