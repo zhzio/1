@@ -3,40 +3,41 @@ const AREA = "2_2_2834_0";
 
 export default {
   async fetch() {
-    const body = JSON.stringify({
-      skuId: SKU,
-      areaId: AREA
-    });
+    const url =
+      "https://api.m.jd.com/client.action" +
+      "?functionId=wareBusiness" +
+      "&client=android" +
+      "&clientVersion=12.0.7";
 
-    const params = new URLSearchParams({
-      appid: "item-view",
-      functionId: "getWareBusiness",
-      client: "m",
-      clientVersion: "12.0.0",
-      skuId: SKU,
-      body
+    const body = new URLSearchParams({
+      body: JSON.stringify({
+        skuId: SKU,
+        area: AREA
+      })
     });
-
-    const url = `https://api.m.jd.com/api?${params}`;
 
     try {
       const r = await fetch(url, {
+        method: "POST",
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
-          "Referer": "https://item.m.jd.com/",
-          "Accept": "application/json,text/plain,*/*"
-        }
+          "User-Agent": "okhttp/3.12.16;jdmall;android;version/12.0.7;",
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+        },
+        body
       });
 
       const text = await r.text();
 
       return new Response(
-        JSON.stringify({
-          status: r.status,
-          ok: r.ok,
-          sample: text.slice(0, 3000)
-        }, null, 2),
+        JSON.stringify(
+          {
+            status: r.status,
+            ok: r.ok,
+            sample: text.slice(0, 3000)
+          },
+          null,
+          2
+        ),
         {
           headers: {
             "content-type": "application/json;charset=UTF-8"
