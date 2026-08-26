@@ -1,52 +1,52 @@
 const SKU = "100358795300";
 const AREA = "2_2_2834_0";
 
-const TESTS = [
-  `https://c0.3.cn/stocks?type=getstocks&skuIds=${SKU}&area=${AREA}`,
-  `https://c0.3.cn/stock?skuId=${SKU}&area=${AREA}`,
-  `https://p.3.cn/prices/mgets?skuIds=J_${SKU}`,
-  `https://pm.3.cn/prices/mgets?origin=2&skuIds=${SKU}`,
-  `https://api.m.jd.com/`
-];
-
-async function testUrl(url) {
-  try {
-    const r = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "*/*"
-      }
-    });
-
-    const text = await r.text();
-
-    return {
-      url,
-      ok: r.ok,
-      status: r.status,
-      sample: text.slice(0, 300)
-    };
-  } catch (e) {
-    return {
-      url,
-      ok: false,
-      error: String(e.message || e)
-    };
-  }
-}
-
 export default {
   async fetch() {
-    const results = [];
+    const url =
+      `https://item-soa.jd.com/getWareBusiness` +
+      `?skuId=${SKU}` +
+      `&area=${AREA}` +
+      `&num=1`;
 
-    for (const url of TESTS) {
-      results.push(await testUrl(url));
+    try {
+      const r = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+          "Referer": `https://item.jd.com/${SKU}.html`,
+          "Accept": "application/json,text/plain,*/*"
+        }
+      });
+
+      const text = await r.text();
+
+      return new Response(
+        JSON.stringify(
+          {
+            status: r.status,
+            ok: r.ok,
+            sample: text.slice(0, 2000)
+          },
+          null,
+          2
+        ),
+        {
+          headers: {
+            "content-type": "application/json;charset=UTF-8"
+          }
+        }
+      );
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ error: String(e.message || e) }, null, 2),
+        {
+          status: 500,
+          headers: {
+            "content-type": "application/json;charset=UTF-8"
+          }
+        }
+      );
     }
-
-    return new Response(JSON.stringify(results, null, 2), {
-      headers: {
-        "content-type": "application/json;charset=UTF-8"
-      }
-    });
   }
 };
