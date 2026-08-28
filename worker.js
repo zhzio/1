@@ -1,12 +1,24 @@
-// redeploy runtime secret
-const SKU = "100358795300";
 const AREA = "2_2_2834_0";
 
-// 抓取用：直接商品页
-const PRODUCT = `https://mitem.jd.hk/product/${SKU}.html`;
+const PRODUCTS = [
+  {
+    id: "collector",
+    name: "空轨2nd典藏版",
+    sku: "100358795300",
+    buyUrl: "https://3.jd.hk/102JD-m0"
+  },
+  {
+    id: "standard",
+    name: "空轨2nd普通版",
+    sku: null,
+    buyUrl: "https://3.jd.hk/-102LqS7"
+  }
+];
 
-// Bark 通知点击后打开的购买页面
-const BUY_URL = "https://3.jd.hk/102JD-m0";
+const UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) " +
+  "AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1";
+
 
 function stockName(state) {
   if (state === 33) return "现货";
@@ -14,188 +26,589 @@ function stockName(state) {
   if (state === 40) return "可配货";
   if (state === 36) return "预定";
   if (state === 34) return "无货";
+
   return `未知(${state})`;
 }
 
-async function getStock() {
-  const r = await fetch(PRODUCT, {
-    redirect: "follow",
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
-      // 上海 → 上海 → 松江
-      "Cookie":
-        `wq_addr=0%7C${AREA}%7C%7C; ` +
-        `jdAddrId=${AREA}; ` +
-        `mitemAddrId=${AREA}; ` +
-        `regionAddress=2%2C2%2C2834%2C0; ` +
-        `commonAddress=0`
+function skuFromText(text) {
+  if (!text) return null;
+
+  const patterns = [
+    /\/product\/(\d{8,})\.html/i,
+    /item\.jd\.hk\/(\d{8,})\.html/i,
+    /item\.jd\.com\/(\d{8,})\.html/i,
+    /[?&]sku=(\d{8,})/i,
+    /[?&]skuId=(\d{8,})/i,
+    /[?&]wareId=(\d{8,})/i,
+    /"skuId"\s*:\s*"?(\d{8,})"?/i,
+    /"sku"\s*:\s*"?(\d{8,})"?/i,
+    /"wareId"\s*:\s*"?(\d{8,})"?/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (match) {
+      return match[1];
     }
-  });
-
-  if (!r.ok) {
-    throw new Error(`京东商品页 HTTP ${r.status}`);
   }
 
-  const text = await r.text();
+  return null;
+}
 
-  // 页面实际库存 JSON：
-  // "StockState":34
-  const match = text.match(/"StockState"\s*:\s*(\d+)/);
+
+async function resolveSku(product) {
+  if (product.sku) {
+    return product.sku;
+  }
+
+  const cache = caches.default;
+
+  const cacheKey =
+    new Request(
+      `https://jd-kiseki-monitor.kairito0504.workers.dev/__sku/${product.id}`
+    );
+
+  const cached =
+    await cache.match(cacheKey);
+
+  if (cached) {
+    const value =
+      await cached.text();
+
+    if (value) {
+      return value;
+    }
+  }
+
+
+  let current =
+    product.buyUrl;
+
+  for (let i = 0; i < 6; i++) {
+
+    const urlSku =
+      skuFromText(current);
+
+    if (urlSku) {
+      await cache.put(
+        cacheKey,
+        new Response(urlSku, {
+          headers: {
+            "Cache-Control":
+              "max-age=86400"
+          }
+        })
+      );
+
+      return urlSku;
+    }
+
+
+    const response =
+      await fetch(current, {
+        redirect: "manual",
+
+        headers: {
+          "User-Agent": UA,
+          "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+      });
+
+
+    const location =
+      response.headers.get(
+        "location"
+      );
+
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      location
+    ) {
+      current =
+        new URL(
+          location,
+          current
+        ).toString();
+
+      continue;
+    }
+
+
+    const finalUrl =
+      response.url || current;
+
+    let sku =
+      skuFromText(finalUrl);
+
+    if (!sku) {
+      const text =
+        await response.text();
+
+      sku =
+        skuFromText(text);
+    }
+
+    if (sku) {
+      await cache.put(
+        cacheKey,
+        new Response(sku, {
+          headers: {
+            "Cache-Control":
+              "max-age=86400"
+          }
+        })
+      );
+
+      return sku;
+    }
+
+    break;
+  }
+
+
+  throw new Error(
+    `${product.name}：无法从京东短链解析 SKU`
+  );
+}
+
+
+async function getStock(product) {
+  const sku =
+    await resolveSku(product);
+
+  const productUrl =
+    `https://mitem.jd.hk/product/${sku}.html`;
+
+  const response =
+    await fetch(productUrl, {
+      redirect: "follow",
+
+      headers: {
+        "User-Agent": UA,
+
+        "Accept":
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+        "Cookie":
+          `wq_addr=0%7C${AREA}%7C%7C; ` +
+          `jdAddrId=${AREA}; ` +
+          `mitemAddrId=${AREA}; ` +
+          `regionAddress=2%2C2%2C2834%2C0; ` +
+          `commonAddress=0`
+      }
+    });
+
+
+  if (!response.ok) {
+    throw new Error(
+      `${product.name} 京东商品页 HTTP ${response.status}`
+    );
+  }
+
+
+  const text =
+    await response.text();
+
+  const match =
+    text.match(
+      /"StockState"\s*:\s*(\d+)/
+    );
+
 
   if (!match) {
-    throw new Error("没有找到 StockState");
+    throw new Error(
+      `${product.name}：没有找到 StockState`
+    );
   }
 
-  const state = Number(match[1]);
+
+  const state =
+    Number(match[1]);
 
   return {
+    sku,
     state,
     name: stockName(state),
-    finalUrl: r.url
+    finalUrl: response.url
   };
 }
 
-async function pushBark(env, title, body) {
+
+async function pushBark(
+  env,
+  product,
+  title,
+  body
+) {
   if (!env.BARK_KEY) {
-    throw new Error("未设置运行时 BARK_KEY");
+    throw new Error(
+      "未设置运行时 BARK_KEY"
+    );
   }
+
 
   const url =
     `https://api.day.app/${env.BARK_KEY}/` +
     `${encodeURIComponent(title)}/` +
     `${encodeURIComponent(body)}` +
-    `?url=${encodeURIComponent(BUY_URL)}` +
+    `?url=${encodeURIComponent(product.buyUrl)}` +
     `&group=jd-kiseki-monitor` +
     `&level=critical` +
     `&volume=10`;
 
-  const r = await fetch(url);
 
-  if (!r.ok) {
-    throw new Error(`Bark HTTP ${r.status}`);
+  const response =
+    await fetch(url);
+
+
+  if (!response.ok) {
+    throw new Error(
+      `Bark HTTP ${response.status}`
+    );
   }
 }
 
-// 防止有货后每分钟疯狂通知
-async function allowAlert() {
-  const cache = caches.default;
 
-  const key = new Request(
-    "https://jd-kiseki-monitor.kairito0504.workers.dev/__alert_cooldown"
-  );
+/*
+ * 每个版本独立记录状态。
+ *
+ * 只有：
+ * 无货 -> 有货
+ *
+ * 才推送一次。
+ */
+async function shouldAlert(
+  product,
+  buyable
+) {
+  const cache =
+    caches.default;
 
-  const old = await cache.match(key);
+  const key =
+    new Request(
+      `https://jd-kiseki-monitor.kairito0504.workers.dev/__stock/${product.id}`
+    );
 
-  if (old) return false;
+
+  const old =
+    await cache.match(key);
+
+  let previous =
+    null;
+
+  if (old) {
+    previous =
+      (await old.text()) === "1";
+  }
+
 
   await cache.put(
     key,
-    new Response("1", {
-      headers: {
-        "Cache-Control": "max-age=600"
+    new Response(
+      buyable ? "1" : "0",
+      {
+        headers: {
+          "Cache-Control":
+            "max-age=604800"
+        }
       }
-    })
+    )
   );
 
-  return true;
+
+  /*
+   * 第一次运行：
+   * 如果当前正好有货，也提醒一次。
+   */
+  if (previous === null) {
+    return buyable;
+  }
+
+
+  return (
+    buyable &&
+    previous === false
+  );
 }
 
-async function check(env) {
-  const stock = await getStock();
 
-  // 现货 / 在途有货 / 可配货 / 重新开放预定
+async function checkProduct(
+  env,
+  product
+) {
+  const stock =
+    await getStock(product);
+
+
   const buyable =
     stock.state === 33 ||
     stock.state === 39 ||
     stock.state === 40 ||
     stock.state === 36;
 
-  let notified = false;
 
-  if (buyable && (await allowAlert())) {
+  let notified =
+    false;
+
+
+  if (
+    await shouldAlert(
+      product,
+      buyable
+    )
+  ) {
     await pushBark(
       env,
-      "空轨2nd典藏版补货！",
+
+      product,
+
+      `${product.name}补货！`,
+
       `${stock.name}｜赶紧去京东下单`
     );
 
-    notified = true;
+    notified =
+      true;
   }
 
+
   return {
-    sku: SKU,
-    area: AREA,
-    stockState: stock.state,
-    stockName: stock.name,
+    id:
+      product.id,
+
+    name:
+      product.name,
+
+    sku:
+      stock.sku,
+
+    stockState:
+      stock.state,
+
+    stockName:
+      stock.name,
+
     buyable,
+
     notified,
-    barkConfigured: Boolean(env.BARK_KEY),
-    checkedAt: new Date().toISOString()
+
+    buyUrl:
+      product.buyUrl
   };
 }
 
-export default {
-  async fetch(request, env) {
-    try {
-      const u = new URL(request.url);
 
-      // 手动测试 Bark：
-      // workers.dev/?test=1
-      if (u.searchParams.get("test") === "1") {
+async function checkAll(env) {
+  const products =
+    [];
+
+
+  /*
+   * 一个商品出错，不影响另一个继续监控。
+   */
+  for (const product of PRODUCTS) {
+
+    try {
+      products.push(
+        await checkProduct(
+          env,
+          product
+        )
+      );
+
+    } catch (error) {
+
+      products.push({
+        id:
+          product.id,
+
+        name:
+          product.name,
+
+        buyUrl:
+          product.buyUrl,
+
+        error:
+          String(
+            error?.message ||
+            error
+          )
+      });
+    }
+  }
+
+
+  return {
+    ok: true,
+
+    area:
+      AREA,
+
+    barkConfigured:
+      Boolean(env.BARK_KEY),
+
+    checkedAt:
+      new Date()
+        .toISOString(),
+
+    products
+  };
+}
+
+
+export default {
+
+  async fetch(
+    request,
+    env
+  ) {
+    try {
+      const url =
+        new URL(request.url);
+
+
+      /*
+       * Bark 测试：
+       *
+       * ?test=collector
+       * ?test=standard
+       */
+      const test =
+        url.searchParams.get(
+          "test"
+        );
+
+
+      if (test) {
+
+        const product =
+          PRODUCTS.find(
+            item =>
+              item.id === test
+          );
+
+
+        if (!product) {
+          return new Response(
+            JSON.stringify(
+              {
+                error:
+                  "test 必须是 collector 或 standard"
+              },
+              null,
+              2
+            ),
+            {
+              status: 400,
+
+              headers: {
+                "content-type":
+                  "application/json;charset=UTF-8"
+              }
+            }
+          );
+        }
+
+
         await pushBark(
           env,
-          "空轨2nd监控测试",
-          "Bark 通知已经配置成功"
+
+          product,
+
+          `${product.name}监控测试`,
+
+          "Bark 通知和购买链接正常"
         );
+
 
         return new Response(
           JSON.stringify(
             {
               test: true,
-              barkConfigured: true
+              product:
+                product.name,
+              barkConfigured:
+                true
             },
             null,
             2
           ),
           {
             headers: {
-              "content-type": "application/json;charset=UTF-8"
+              "content-type":
+                "application/json;charset=UTF-8"
             }
           }
         );
       }
 
-      const result = await check(env);
 
-      return new Response(JSON.stringify(result, null, 2), {
-        headers: {
-          "content-type": "application/json;charset=UTF-8"
+      const result =
+        await checkAll(env);
+
+
+      return new Response(
+        JSON.stringify(
+          result,
+          null,
+          2
+        ),
+        {
+          headers: {
+            "content-type":
+              "application/json;charset=UTF-8",
+
+            "cache-control":
+              "no-store"
+          }
         }
-      });
-    } catch (e) {
+      );
+
+
+    } catch (error) {
+
       return new Response(
         JSON.stringify(
           {
-            error: String(e.message || e)
+            error:
+              String(
+                error?.message ||
+                error
+              )
           },
           null,
           2
         ),
         {
           status: 500,
+
           headers: {
-            "content-type": "application/json;charset=UTF-8"
+            "content-type":
+              "application/json;charset=UTF-8"
           }
         }
       );
     }
   },
 
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(check(env));
+
+  async scheduled(
+    event,
+    env,
+    ctx
+  ) {
+    ctx.waitUntil(
+      checkAll(env)
+        .catch(
+          error =>
+            console.error(
+              error
+            )
+        )
+    );
   }
 };
